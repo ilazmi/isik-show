@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Işık Şovu Prototip</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:#0b0b10;color:#eee;font-family:system-ui,-apple-system,sans-serif}
+  body{padding:max(12px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));max-width:480px;margin:0 auto}
+  h1{font-size:20px;margin:10px 0 4px}
+  p.sub{margin:0 0 14px;color:#9a9aa8;font-size:14px}
+  .card{background:#17171f;border-radius:14px;padding:14px;margin-bottom:12px}
+  label{display:block;font-size:14px;margin:10px 0 4px}
+  input[type=range]{width:100%}
+  .row{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px}
+  button{width:100%;padding:16px;border:0;border-radius:12px;font-size:18px;font-weight:700;background:#ffd23f;color:#111}
+  #status{font-size:14px;color:#9a9aa8;min-height:20px}
+  #seg{font-size:22px;font-weight:700;margin:6px 0}
+  #dot{width:28px;height:28px;border-radius:50%;background:#333;display:inline-block;vertical-align:middle;margin-right:8px}
+  #dot.on{background:#ffd23f;box-shadow:0 0 18px #ffd23f}
+  .warn{font-size:12px;color:#8a8a98;line-height:1.4}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:5}
+  #stop{position:fixed;left:16px;right:16px;bottom:max(16px,env(safe-area-inset-bottom));z-index:10;background:#e5484d;color:#fff;display:none}
+  video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<h1>Işık Şovu Prototip</h1>
+<p class="sub">Telefon flaşı müzikle ritim tutar. Aynı anda başlatılan telefonlar aynı ritimde yanar.</p>
+
+<div class="card">
+  <div id="seg"><span id="dot"></span><span id="segname">Hazır</span></div>
+  <div id="status">Başlat'a basınca kamera izni isteyeceğim (sadece flaş için, görüntü alınmaz).</div>
+</div>
+
+<div class="card">
+  <label>Koltuk no: <b id="seatv">0</b> (dalga efektinde sıra belirler)</label>
+  <input id="seat" type="range" min="0" max="100" value="0">
+  <label>Gecikme telafisi: <b id="compv">0</b> ms (flaş geç yanıyorsa artır)</label>
+  <input id="comp" type="range" min="0" max="300" value="0">
+  <div class="row"><input id="chkScreen" type="checkbox"><label for="chkScreen" style="margin:0">Ekranı da yak (flaş olsa bile)</label></div>
+  <div class="row"><input id="chkDrum" type="checkbox"><label for="chkDrum" style="margin:0">Test davulu çal (ritmi duymak için)</label></div>
+</div>
+
+<button id="go">▶ Başlat</button>
+<p class="warn" style="margin-top:14px">⚠️ Hızlı yanıp sönen ışık içerir. Işığa duyarlı kişiler kullanmamalı. Flaşı kimsenin gözüne tutma. Uzun süre kullanımda telefon ısınabilir.</p>
+
+<div id="flash"></div>
+<button id="stop">■ Durdur</button>
+<video id="vid" muted playsinline></video>
+
+<script>
+const BPM = 120, BEAT = 60000 / BPM, CYCLE = 32;          // 32 vuruş = 16 sn döngü
+const segs = [
+  {n:'Nabız',            f:(p)=> p < 0.3},
+  {n:'Çift strobe',      f:(p)=> p < 0.15 || (p >= 0.5 && p < 0.65)},
+  {n:'Dalga',            f:(p,b,o)=>{ const q=(((p-o)%1)+1)%1; return q < 0.25; }},
+  {n:'Final',            f:(p,b)=> b < 4 ? true : (b < 6 ? false : ((p*4)%1) < 0.5)}
+];
+const $ = id => document.getElementById(id);
+let running=false, torchOk=false, stream=null, track=null, wake=null, ctx=null;
+let want=false, applied=false, busy=false, lastBeat=-1;
+
+function msg(t){ $('status').textContent = t; }
+$('seat').oninput = e => $('seatv').textContent = e.target.value;
+$('comp').oninput = e => $('compv').textContent = e.target.value;
+
+function pump(){
+  if(!track || !torchOk || busy || want === applied) return;
+  busy = true;
+  const target = want;
+  track.applyConstraints({advanced:[{torch:target}]})
+    .then(()=>{ applied = target; })
+    .catch(()=>{})
+    .finally(()=>{ busy = false; pump(); });
+}
+
+function kick(){
+  if(!ctx) return;
+  const t=ctx.currentTime, o=ctx.createOscillator(), g=ctx.createGain();
+  o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(40,t+0.12);
+  g.gain.setValueAtTime(0.9,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.2);
+  o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t+0.22);
+}
+
+function loop(){
+  if(!running) return;
+  const t = Date.now() + Number($('comp').value);
+  const pos = (t % (CYCLE*BEAT)) / BEAT;
+  const si = Math.floor(pos/8), inSeg = pos % 8, b = Math.floor(inSeg), p = inSeg - b;
+  const on = segs[si].f(p, b, Number($('seat').value) * 0.04);
+
+  want = on; pump();
+  const useScreen = !torchOk || $('chkScreen').checked;
+  $('flash').style.opacity = (useScreen && on) ? 1 : 0;
+  $('dot').className = on ? 'on' : '';
+  $('segname').textContent = segs[si].n;
+
+  const bi = Math.floor(pos);
+  if(bi !== lastBeat){ lastBeat = bi; if($('chkDrum').checked) kick(); }
+  requestAnimationFrame(loop);
+}
+
+async function start(){
+  try{ ctx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    torchOk = false;
+    msg('⚠️ Güvenli bağlantı (https) gerekli, flaş kullanılamıyor. Ekran modu açık.');
+  }else{
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+      $('vid').srcObject = stream;
+      await $('vid').play().catch(()=>{});
+      track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      torchOk = !!caps.torch;
+      msg(torchOk ? '✅ Flaş kontrolü hazır.' : '⚠️ Bu cihazda flaş kontrolü yok. Ekran modu açık.');
+    }catch(e){
+      torchOk = false;
+      msg('⚠️ Kamera izni alınamadı (' + e.name + '). Ekran modu açık.');
+    }
+  }
+  try{ wake = await navigator.wakeLock.request('screen'); }catch(e){}
+  running = true; lastBeat = -1; applied = false; want = false;
+  $('go').style.display = 'none'; $('stop').style.display = 'block';
+  requestAnimationFrame(loop);
+}
+
+async function stop(){
+  running = false; want = false;
+  try{ if(track && torchOk) await track.applyConstraints({advanced:[{torch:false}]}); }catch(e){}
+  if(stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; track = null; applied = false;
+  try{ if(wake) await wake.release(); }catch(e){}
+  $('flash').style.opacity = 0; $('dot').className = '';
+  $('segname').textContent = 'Durdu';
+  $('go').style.display = 'block'; $('stop').style.display = 'none';
+}
+
+$('go').onclick = start;
+$('stop').onclick = stop;
+</script>
+</body>
+</html>
