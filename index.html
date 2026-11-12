@@ -31,14 +31,16 @@
 
 <div class="card">
   <div id="seg"><span id="dot"></span><span id="segname">Hazır</span></div>
+  <div id="clock" style="font:700 20px ui-monospace,monospace;margin:4px 0">--:--:--.---</div>
   <div id="status">Başlat'a basınca kamera izni isteyeceğim (sadece flaş için, görüntü alınmaz).</div>
 </div>
 
 <div class="card">
   <label>Koltuk no: <b id="seatv">0</b> (dalga efektinde sıra belirler)</label>
   <input id="seat" type="range" min="0" max="100" value="0">
-  <label>Gecikme telafisi: <b id="compv">0</b> ms (flaş geç yanıyorsa artır)</label>
-  <input id="comp" type="range" min="0" max="300" value="0">
+  <label>Zaman ayarı: <b id="compv">0</b> ms (+ ritmi öne alır, − geciktirir)</label>
+  <input id="comp" type="range" min="-500" max="500" step="10" value="0">
+  <div class="row" style="gap:6px"><button id="m" style="padding:8px;font-size:16px">−10</button><button id="pl" style="padding:8px;font-size:16px">+10</button></div>
   <div class="row"><input id="chkScreen" type="checkbox"><label for="chkScreen" style="margin:0">Ekranı da yak (flaş olsa bile)</label></div>
   <div class="row"><input id="chkDrum" type="checkbox"><label for="chkDrum" style="margin:0">Test davulu çal (ritmi duymak için)</label></div>
 </div>
@@ -64,6 +66,10 @@ let running=false, torchOk=false, stream=null, track=null, wake=null, ctx=null;
 let want=false, applied=false, busy=false, lastBeat=-1;
 
 function msg(t){ $('status').textContent = t; }
+function clk(){ const d=new Date(Date.now()+Number($('comp').value)); const z=n=>String(n).padStart(2,'0'); $('clock').textContent='Saat: '+z(d.getHours())+':'+z(d.getMinutes())+':'+z(d.getSeconds())+'.'+String(d.getMilliseconds()).padStart(3,'0'); }
+setInterval(clk,50);
+function nudge(n){ const c=$('comp'); c.value=Math.max(-500,Math.min(500,Number(c.value)+n)); $('compv').textContent=c.value; }
+$('m').onclick=()=>nudge(-10); $('pl').onclick=()=>nudge(10);
 $('seat').oninput = e => $('seatv').textContent = e.target.value;
 $('comp').oninput = e => $('compv').textContent = e.target.value;
 
