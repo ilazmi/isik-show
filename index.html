@@ -76,18 +76,30 @@ $('comp').oninput = e => $('compv').textContent = e.target.value;
 function log(t){ $('log').textContent += t + '\n'; }
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-async function tryCam(constraint, name){
+let torchId = null;
+try{ torchId = localStorage.getItem('torchId'); }catch(e){}
+
+async function tryCam(constraint, name, delay){
   const s = await navigator.mediaDevices.getUserMedia({video:constraint, audio:false});
   const t = s.getVideoTracks()[0];
-  await wait(400);
+  await wait(delay || 400);
   let caps = {};
   try{ caps = t.getCapabilities ? t.getCapabilities() : {}; }catch(e){}
   const ok = !!caps.torch;
   log('Kamera "' + (t.label || name) + '": flaş=' + (ok ? 'VAR' : 'yok'));
+  if(ok){ try{ torchId = t.getSettings().deviceId; localStorage.setItem('torchId', torchId); }catch(e){} }
   return {s, t, ok};
 }
 
 async function findTorchCamera(){
+  if(torchId){
+    try{
+      const c = await tryCam({deviceId:{exact:torchId}}, 'kayıtlı', 120);
+      if(c.ok) return c;
+      c.s.getTracks().forEach(t => t.stop());
+    }catch(e){}
+    torchId = null;
+  }
   let best = await tryCam({facingMode:{ideal:'environment'}}, 'varsayılan');
   if(best.ok) return best;
   let devs = [];
@@ -177,6 +189,19 @@ async function stop(){
 }
 
 $('go').onclick = start;
+
+// Sayfa açılınca flaşlı kamerayı bul ve kaydet, Başlat'ta direkt kullan
+window.addEventListener('load', async () => {
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  try{
+    msg('Flaş kamerası aranıyor…');
+    const f = await findTorchCamera();
+    f.s.getTracks().forEach(t => t.stop());
+    msg(f.ok ? '✅ Flaş kamerası hazır. Başlat\'a bas.' : '⚠️ Flaş kamerası bulunamadı, ekran modu kullanılacak.');
+  }catch(e){
+    msg('Kamera izni için Başlat\'a bas (' + e.name + ').');
+  }
+});
 $('stop').onclick = stop;
 </script>
 </body>
