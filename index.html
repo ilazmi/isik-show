@@ -44,6 +44,7 @@
 </div>
 
 <button id="go">▶ Başlat</button>
+<pre id="log" class="warn" style="white-space:pre-wrap;margin-top:12px"></pre>
 <p class="warn" style="margin-top:14px">⚠️ Hızlı yanıp sönen ışık içerir. Işığa duyarlı kişiler kullanmamalı. Flaşı kimsenin gözüne tutma. Uzun süre kullanımda telefon ısınabilir.</p>
 
 <div id="flash"></div>
@@ -66,13 +67,46 @@ function msg(t){ $('status').textContent = t; }
 $('seat').oninput = e => $('seatv').textContent = e.target.value;
 $('comp').oninput = e => $('compv').textContent = e.target.value;
 
+function log(t){ $('log').textContent += t + '\n'; }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function tryCam(constraint, name){
+  const s = await navigator.mediaDevices.getUserMedia({video:constraint, audio:false});
+  const t = s.getVideoTracks()[0];
+  await wait(400);
+  let caps = {};
+  try{ caps = t.getCapabilities ? t.getCapabilities() : {}; }catch(e){}
+  const ok = !!caps.torch;
+  log('Kamera "' + (t.label || name) + '": flaş=' + (ok ? 'VAR' : 'yok'));
+  return {s, t, ok};
+}
+
+async function findTorchCamera(){
+  let best = await tryCam({facingMode:{ideal:'environment'}}, 'varsayılan');
+  if(best.ok) return best;
+  let devs = [];
+  try{ devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); }catch(e){}
+  log('Bulunan kamera sayısı: ' + devs.length);
+  const firstId = best.t.getSettings ? best.t.getSettings().deviceId : null;
+  for(const d of devs){
+    if(d.deviceId === firstId) continue;
+    best.s.getTracks().forEach(t => t.stop());
+    try{
+      const c = await tryCam({deviceId:{exact:d.deviceId}}, d.label);
+      if(c.ok) return c;
+      best = c;
+    }catch(e){ log('Açılamadı: ' + (d.label || d.deviceId.slice(0,6)) + ' (' + e.name + ')'); }
+  }
+  return best;
+}
+
 function pump(){
   if(!track || !torchOk || busy || want === applied) return;
   busy = true;
   const target = want;
   track.applyConstraints({advanced:[{torch:target}]})
     .then(()=>{ applied = target; })
-    .catch(()=>{})
+    .catch(e=>{ if(!pump.err){ pump.err=1; log('Flaş komutu hatası: ' + e.name + ' ' + e.message); } })
     .finally(()=>{ busy = false; pump(); });
 }
 
@@ -109,13 +143,11 @@ async function start(){
     msg('⚠️ Güvenli bağlantı (https) gerekli, flaş kullanılamıyor. Ekran modu açık.');
   }else{
     try{
-      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-      $('vid').srcObject = stream;
-      await $('vid').play().catch(()=>{});
-      track = stream.getVideoTracks()[0];
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      torchOk = !!caps.torch;
-      msg(torchOk ? '✅ Flaş kontrolü hazır.' : '⚠️ Bu cihazda flaş kontrolü yok. Ekran modu açık.');
+      log('Tarayıcı: ' + navigator.userAgent.replace(/^Mozilla\/5.0 /,'').slice(0,110));
+      const found = await findTorchCamera();
+      stream = found.s; track = found.t; torchOk = found.ok;
+      $('vid').srcObject = stream; await $('vid').play().catch(()=>{});
+      msg(torchOk ? '✅ Flaş kontrolü hazır.' : '⚠️ Hiçbir kamerada flaş kontrolü bulunamadı. Ekran modu açık.');
     }catch(e){
       torchOk = false;
       msg('⚠️ Kamera izni alınamadı (' + e.name + '). Ekran modu açık.');
